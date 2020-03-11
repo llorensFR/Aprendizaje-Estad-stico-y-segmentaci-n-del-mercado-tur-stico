@@ -47,8 +47,6 @@ df$provdest <- as.factor(df$provdest)
 df$transprin <- as.factor(df$transprin)
 df$ccaa_residencia <- as.factor(df$ccaa_residencia)
 df$motiv <- as.factor(df$motiv)
-df$motiv <- factor(df$motiv)
-df$alojaprin <- factor(df$alojaprin)
 ```
 
 La base de datos utilizada en este proyecto proviene de los microdatos de la Encuesta de Turismo Residente publicada mensualmente por el INE desde 2015 (INE, 2019). Esta base de datos recopila información sobre una muestra representativa de familias españolas en viajes turísticos, entendiendo los viajes turísticos como todos aquellos viajes a un destino fuera del entorno habitual de residencia de la persona, que involucra al menos una pernoctación fuera del entorno mencionado y que tienen una duración inferior a un año.
@@ -150,6 +148,9 @@ df %>%
 df %>%
         group_by(motiv) %>%
         summarise(no_rows = (length(motiv)/nrow(df))*100)
+
+df$motiv <- factor(df$motiv)
+df$alojaprin <- factor(df$alojaprin)
 ```
 
 Una vez realizado este tratamiento previo, la base de datos final consta de un total de `r count(df)` observaciones con un total de `length(df)` variables. 
@@ -275,30 +276,63 @@ En la tabla superior se observa la matriz de confusión del modelo LDA. Estos re
 
 ### 4.3.d Árbol de decisión
 
+En las siguientes secciones se van a explorar métodos relacionados con los árboles de decisión. En este primer apartado se ha estimado un Árbol de Decisión simple con los datos del conjunto de entrenamiento.
 
 ```{r Decision Tree}
 set.seed(111)
 tree.tourism = tree(motiv~. -provdest, data = df.train)
 summary(tree.tourism)
-plot(tree.tourism); text(tree.tourism, pretty = 0)
-tree.pred = predict(tree.tourism, df.test, type = "class")
-with(df.test, table(tree.pred, motiv))
-tree.accuracy = mean(tree.pred==df.test$motiv)
-tree.accuracy
 ```
+
+Como se puede observar, el árbol llega a una profundidad de 4 niveles. Las actividades de playa son el factor más importante en la determinación de la clase de turista. En caso de que un turista manifieste su voluntad de realizar dicho tipo de actividad (acti_playa =1) en la destinación, dependiendo el tipo de alojamiento que elija, será catalogado como turista de “Sol y playa” o turista de “Otro Ocio” (alojamientos de las categorías 8, 10, 12 y 13). 
+
+```{r}
+plot(tree.tourism); text(tree.tourism, pretty = 0)
+```
+
+A partir del diagrama anterior se observa con claridad que las únicas variables que considera el modelo como relevantes para la categorización de la motivación de los turistas son: practicar actividades de playa, visitas culturales, senderismo y el tipo de alojamiento preferido por el turista. 
+
+```{r}
+tree.pred = predict(tree.tourism, df.test, type = "class")
+tree.accuracy = mean(tree.pred==df.test$motiv)
+```
+
+Cuando aplicamos los datos del conjunto de prueba, obtenemos un nivel de precisión de clasificación del `r round(tree.accuracy,2)`.
+
+```{r}
+with(df.test, table(tree.pred, motiv))
+```
+
+El modelo no clasifica a ningún turista del conjunto de prueba en ninguna de las siguientes clases: Compras, Gastronomico, Spa y Deportes. Esta “accuracy” es inferior a la presentada por el modelo Logit, pero ligeramente superior a la del LDA. En cualquier caso, se trata de un modelo muy simple que se va a perfeccionar en los siguientes apartados.
+
+Puede resultar positivo “podar” el arbol (aunque al contar con solo 4 niveles no parece que sea una necesidad). Para hacerlo se ha utilizado la Validación Cruzada 10 veces. 
+
+Como se observa en la siguiente figura, el Árbol consigue los mejores niveles de clasificación con 6 nodos terminales (mismo caso que el Árbol sin podar), sin embargo, comprobaremos cual es el nivel de precisión de clasificación de un árbol con 5 nodos terminales.
 
 ```{r Decision Tree: CV to prune}
 tree.cv.tourism = cv.tree(tree.tourism, FUN= prune.misclass)
 plot(tree.cv.tourism)
+```
+
+```{r}
 prune.tourism = prune.misclass(tree.tourism, best = 5)
 plot(prune.tourism); text(prune.tourism, pretty = 0)
 tree.pred.cv = predict(prune.tourism, df.test, type="class")
 with(df.test, table(tree.pred.cv, motiv))
 tree.accuracy.cv = mean(tree.pred.cv==df.test$motiv)
-tree.accuracy.cv
 ```
 
-```{r Random Forest}
+En este caso se consigue una “accuracy” igual al `r round (tree.accuracy.cv, 3), inferior al árbol que ha crecido al completo. La interpretación de los nodos es muy similar a la del árbol sin podar siendo, otra vez, la práctica de actividades de playa el factor más importante para la clasificación. Cabe destacar que, en este caso, el modelo no es capaz de clasificar ninguna observación en la categoría “Naturaleza”. 
+
+### 4.3.3 Bosques Aleatorios
+
+El modelo de bosques aleatorios (RF) supone una mejora substancial respecto al modelo de Arboles de Decisión simple. En este método se construyen arboles de decisión de muestras del conjunto de entrenamiento mediante bootstrap considerando una selección aleatoria de m predictores del conjunto total de predictores p. 
+
+Por tanto, para aplicar este método es necesario determinar cual es este valor m, es decir, cuantas variables se seleccionarán de forma aleatoria como candidatas en cada división del árbol. 
+
+Sin embargo, con el objetivo de encontrar el valor de m que maximiza la “accuracy” de la clasificación, se ha aplicado la Validación Cruzada con 5 “folds”. Para obtener un buen “tuning” de los parámetros del modelo se ha dividido el conjunto de entrenamiento (24,641 observaciones, un 80% del total) en dos subconjuntos, uno que seguirá siendo el de entrenamiento (que contiene el 75% de las observaciones del conjunto original de entrenamiento, 18,484 observaciones o un 60% del total de observaciones de la muestra) y otro que se denomina conjunto de validación (que contiene el 25% restante de las observaciones que se encontraban en el conjunto de entrenamiento original). Por tanto, para el modelo RF se trabajará con 3 subconjuntos de datos: conjunto de entrenamiento (60% de la muestra), conjunto de validación (20%) y conjunto de entrenamiento (20%).
+
+```{r}
 set.seed(111)
 # 60% Training, 20% Validation, 20% Test 
 inTraining <- createDataPartition(df.train$motiv, p=0.75, list=FALSE)
@@ -308,13 +342,19 @@ validation.set <- df.train[-inTraining,]
 dataset <- training.set
 validation <- validation.set
 test <- df.test
+
 # The final model will actually use all data, except test
 total <- rbind(dataset, validation)
+```
 
-# Reduce the grid to save time here. 
+Con el objetivo de limitar el tiempo y los recursos de computación requeridos, se ha limitado el número de alternativas de m a los valores: 3, 7 (valor siguiendo la visión clásica), 11 y 13. En primer lugar se ha estimado el modelo para los datos del conjunto de entrenamiento, aplicando la CV 5-folds, con el objetivo de seleccionar el valor de m que consiga una mayor “accuracy”. 
+
+```{r Random Forest Grid}
+set.seed(111)
+# Reduce the grid to save time 
 fitControl <- trainControl(method = 'cv', number = 5, summaryFunction=defaultSummary)
 
-rfGrid <-  expand.grid(mtry = c(1,3, 5,7,9))
+rfGrid <-  expand.grid(mtry = c(3,7,11,13))
 
 ### Random Forest algorithm. ###
 fit.rf <- train(motiv~., data=dataset, method = 'rf', trControl=fitControl, tuneGrid=rfGrid, metric='Accuracy', distribution='multinomial')
@@ -322,74 +362,164 @@ fit.rf
 plot(fit.rf)
 res_rf <- fit.rf$results
 acc_rf <- subset(res_rf[2])
+
 # CV con mejor "tune"
 max(acc_rf)
+```
 
+Tal y como indica la Figura superior, el valor de m que maximiza la tasa de precisión de la CV en el conjunto de entrenamiento es 13. Es decir, considerar 13 predictores aleatorios del conjunto de 56 variables en cada división.
+
+```{r}
 rf.caret.pred <- predict(fit.rf,validation)
 
+rf.val.acc = mean(rf.caret.pred==validation$motiv)
+```
+
+En segundo lugar, se aplican las observaciones del conjunto de validación a los estimadores del RF con m = 13. Se ha obtenido una “accuracy rate” del `r round(rf.val.acc, 2). En la Tabla inferior se presenta la matriz de confusión para el conjunto de validación. 
+
+```{r}
 table(rf.caret.pred ,validation$motiv)
-mean(rf.caret.pred==validation$motiv)
+```
+
+Finalmente, se estima el modelo anteiror con un mtry = 13 con un CV de 5 "folds" para posteriormente estimar las clases predichas para cada observaciónd del conjunto de prueba.
+
+```{r}
+rfGrid <-  expand.grid(mtry = 13)
 
 fit.rf_total <- train(motiv~., data=total, method = 'rf', trControl=fitControl, tuneGrid=rfGrid, metric='Accuracy', distribution='multinomial')
 fit.rf_total
-plot(fit.rf_total)
-res_rf_total <- fit.rf_total$results
-acc_rf_total <- subset(res_rf_total[2]) 
-# CV con mejor "tune" 
-max(acc_rf_total)
+
 #Evaluate on test
 rf.caret.pred_total <- predict(fit.rf_total,test)
 
-table(rf.caret.pred_total ,test$motiv)
 rf.accuracy = mean(rf.caret.pred_total==test$motiv)
 ```
 
+Finalmente el modelo Random Forest obtiene una accuracy igual a `r round(rf.accuracy, 2)`. Siendo esta la más alta de todas las obtenidas hasta el momento.
 
+Finalmente se presenta la matriz de confusión de las clases predichas por el modelo.
+
+```{r}
+table(rf.caret.pred_total ,test$motiv)
+```
+
+
+### 4.3.4 Boosting
+
+Finalmente, se ha implementado un modelo de Boosting, concretamente se ha aplicado la técnica conocida como Boosting Gradient Machine. Esta técnica guarda muchas similitudes con la de Bosques Aleatorios, su principal diferencia es que en este caso los árboles crecen de forma secuencial.
+
+La principal ventaja del boosting reside en que es un modelo que aprende lentamente, evitando así posibles situaciones de “overfitting” (o sobreajuste). Este proceso de aprendizaje lento reside en que se van ajustando pequeños arboles de los residuos del modelo de forma secuencial. De esta manera se mejoran de forma paulatina los parámetros de la función f en aquellas zonas donde falla la predicción (James, Witten, Hastie, & Tibshirani, 2013). 
+
+A diferencia del modelo de Bosques Aleatorios dónde tan solo debíamos prefijar un parámetro, en este caso debemos definir tres de ellos: la profundidad del árbol, el número de árboles a construir y el “shrinkage” (que es un parámetro de contracción que realentiza aíun más el proceso de aprendizaje). 
+
+Con el fin de obtener los valores para estos parámetros que consigan un mejor “tune” se aplicará el mismo proceso que en el apartado anterior (Bosques Aleatorios) mediante la Validación Cruzada con 3 “folds”. Con el objetivo de limitar los tiempos de ejecución se han limitado los valores que podían tomar cada uno de estos parámetros: 
+
+•	Profundidad: 3, 4 y 9 niveles
+•	Número de árboles: 100, 250 y 500
+•	Shrinkage: 0,001 y 0,01
 
 ```{r Boosting CV}
 set.seed(111)
-#PREPARE A GRID. NOTE: All combinations will be evaluated!
-gbmGrid <-  expand.grid(interaction.depth = c(2,4,6),
-                        n.trees = c(100, 200, 500),
+
+#PREPARE A GRID. 
+gbmGrid <-  expand.grid(interaction.depth = c(3,6,9),
+                        n.trees = c(100, 250, 500),
                         shrinkage = c(.001, .01),
                         n.minobsinnode = 10)
 
-fitControl <- trainControl(method = 'cv', number = 5, summaryFunction=defaultSummary)
+fitControl <- trainControl(method = 'cv', number = 3, summaryFunction=defaultSummary)
+```
 
+Se aplica cada una de las combinaciones del grid anterior al modelo GBM con los datos del conjunto de entrenamiento
+
+```{r}
 ### Gradient boosting machine algorithm. ###
-fit.gbm <- train(motiv~., data=dataset, method = 'gbm', trControl=fitControl, tuneGrid=gbmGrid, metric='Accuracy', distribution='multinomial')
+fit.gbm <- train(motiv~., data=df.train, method = 'gbm', trControl=fitControl, tuneGrid=gbmGrid, metric='Accuracy', distribution='multinomial')
+
 fit.gbm
+```
+
+En la siguiente figura se presentan los niveles de precisión en la clasificación de las diferentes combinaciones de cada uno de los valores de cada parámetro cuando se aplican a las observaciones del conjunto de entrenamiento mediante un proceso de Validación Cruzada con 3 “folds”.
+
+```{r}
 plot(fit.gbm)
+
 fit.gbm$bestTune
 
 res_gbm <- fit.gbm$results
 acc_gbm <- subset(res_gbm[5])
+
 # CV con mejor "tune"
-max(acc_gbm)
-
-boost.caret.pred <- predict(fit.gbm,validation)
-table(boost.caret.pred ,validation$motiv)
-mean(boost.caret.pred==validation$motiv)
-
-fit.gbm_total <- train(motiv~., data=total, method = 'gbm', trControl=fitControl, tuneGrid=gbmGrid, metric='Accuracy', distribution='multinomial')
-fit.gbm_total
-plot(fit.gbm_total)
-fit.gbm_total$bestTune
-
-res_gbm_total <- fit.gbm_total$results
-acc_gbm_total <- subset(res_gbm_total[5])
-# CV con mejor "tune"
-max(acc_gbm_total)
-
-#Evaluate on test
-boost.caret.pred_total <- predict(fit.gbm_total,test)
-
-table(boost.caret.pred_total ,test$motiv)
-bgm.accuracy = mean(boost.caret.pred_total==test$motiv)
-summary(fit.gbm_total, n.trees=500)
+bs.tr.acc = max(acc_gbm)
 ```
+
+Como podemos comprobar en la figura superior, se obtienen los mejores rendimientos cuando se fija una profundidad máxima de 9 niveles (línea verde) independientemente del número de árboles y el “shrinkage” fijados. 
+
+De la misma manera, un “shrinkage” del 0,01 reporta mejores resultados para cada nivel de árboles y para cada profundiad máxima que un “shrinkage” del 0.001. 
+
+Finalmente, se observa como, sobretodo en el caso del “shrinkage” fijado al 0.01, a mayor número de árboles se obtiene un mayor nivel de precisión de clasificación.
+
+Del análisis previo, y tal como se comprueba en la Figura 8, la combinación de parámetros que maximiza la “accuracy rate” para los datos del conjunto de entrenamiento mediante CV 5-folds es:
+
+•	Profundidad: 9 niveles
+•	Número de árboles: 500
+•	Shrinkage:  0,01
+
+Obteniendo una tasa de predicciones correctamente clasificadas del `r round(bs.tr.acc, 2)` (sobre los datos del conjunto de entrenamiento).
+
+Finalmente se ha estimado la clase de cada observación del conjunto de prueba al modelo Boosting previamente entrenado.
+
+En la tabla inferior se presenta la matriz de confunsión: 
+
+```{r}
+#Evaluate on test
+boost.caret.pred <- predict(fit.gbm,df.test)
+
+table(boost.caret.pred , df.test$motiv)
+
+bgm.accuracy = mean(boost.caret.pred==df.test$motiv)
+```
+
+La accuracy sobre el conjunto de prueba del GBM es de `r round(bgm.accuracy, 3)`. Un resultado inferior al obtenido por el Random Forest.
+
+En la tabla y la figura inferiores se presentan el efecto o la influencia de cada variable en el árbol final resultante del proceso de boosting. 
+
+```{r}
+summary(fit.gbm, n.trees=500)
+```
+
+La práctica de actividades de playa resulta ser el predictor más influyente en el modelo, este resultado es el mismo que en el caso del Árbol de Decisión simple, donde las actividades de playa también se revelaban como el predictor mas importante a la hora de clasificar la motivación de los turistas a la hora de viajar. 
+
+En segundo lugar, encontramos el alojamiento principal en destino, en concreto si el turista desea hospedarse en un alojamiento de la clase 10, que se corresponde a la categoría de vivienda en propiedad. Una vez más se trata de un predictor con gran peso en el modelo de Árbol de Decisión.
+
+# 5 Conclusiones y limitaciones del estudio
+
+El objetivo de este trabajo era el de aplicar diferentes técnicas de Aprendizaje Automático/Estadístico al problema de la clasificación de los turistas dependiendo de sus motivaciones para viajar. 
+
+Como ya se ha explicado esta información puede ser de gran valor para las empresas del sector, en especial aquellas que venden productos turísticos on-line. Conociendo de antemano que motivaciones tiene el turista para viajar (p.e, es un turista de sol y playa, o uno cultural, …) se pueden optimizar las campañas de marketing consiguiendo una mayor precisión en la identificación del target. 
+Con el objetivo de que los resultados obtenidos en este proyecto sean extrapolables a situaciones reales, las variables incluidas en el modelo podrían ser recolectadas por cualquier empresa interesada en aplicar los modelos. 
+
+Llegados a este punto se han aplicado un total de 6 técnicas de diferentes, con sus múltiples especificaciones. En todas ellas se ha aplicado la Validación Cruzada con el objetivo de evitar problemas relacionados con el sobreajuste de los modelos, así como de conseguir un mejor “tuning” de los parámetros de cada uno de los modelos.
+
+En la Tabla inferior se presentan los niveles de precisión de “accuracy” logrados por cada modelo una vez obtenido el mejor ajuste “tuning” de los parámetros y aplicando los datos del conjunto de entrenamiento (no utilizado para ajustar dichos parámetros).
 
 ```{r Resumen}
-table(knn.accuracy.k1, logit.accuracy, lda.accuracy, tree.accuracy, tree.accuracy.cv, rf.accuracy, bgm.accuracy)
+baseline = 0.5703
+table(baseline, knn.accuracy.k1, logit.accuracy, lda.accuracy, tree.accuracy, tree.accuracy.cv, rf.accuracy, bgm.accuracy)
 ```
 
+Si nos referimos al modelo de clasificación mas simple como “baseline” o punto de partida (clasificar todas las nuevas observaciones por la clase con mayor peso de la muestra), observamos como todos los modelos aplicados consiguen mejorar el proceso de clasificación de turistas.
+
+El modelo de KNN con 1 vecino resulta ser el consigue un peor rendimiento. A medida que se incrementa la complejidad de los modelos aplicados, mayor es el nivel de precisión que se consigue. Mientras que los modelos de Análisis Discriminante Lineal y Árbol de Decisión (con y sin poda) no alcanzan el 70% de corrección en la clasificación, los de la regresión Logístia así como el de Bosque Aleatorio y Boosting si logran superar esta barrera.
+
+El modelo que consigue clasificar un mayor número de nuevas observaciones de forma correcta en el de Bosque Aleatorio, con una tasa de acierto del `r rf.accuracy`, que representa una mejor de más de 20 puntos porcentuales con respecto al punto de partida. 
+
+En cuanto al rol de los predictores, cabe destacar la importancia de las actividades que quiere realizar el turista en sus vacaciones (sobretodo las actividades de playa) y el tipo de alojamiento que prefiere. Estos dos resultan ser los predictores dominantes en todos los modelos relacionados con los Árboles de Decisión (incluyendo el modelo de Boosting). 
+
+Finalmente, es importante señalar las limitaciones de este estudio. La mayoría de ellas residen en la capacidad de computación de la que se ha dispuesto. Concretamente, ha resultado imposible tener en cuenta todas las combinaciones de parámetros posibles en los modelos de Bosques Aleatorios y de Boosting.
+
+En el modelo de Bosques Aleatorios, se ha observado un crecimiento paulatino del nivel de “accuracy” a medida que se aumentaba el número de predictores seleccionados aleatoriamente que se consideraban, el parámetro m. Sin embargo, debido a estas limitaciones computacionales se ha tenido que fijar el máximo en 13 predictores.
+
+En el caso del modelo aplicando Boosting, las limitaciones son mayores ya que se han tenido que limitar el número de valores que podían tomar un total de 3 parámetros. Los resultados parecen indicar que incrementos en el número de árboles seguirían incrementando la precisión del modelo, sin embargo, las limitaciones de computación (y de tiempo) han imposibilitado extender el análisis. Tampoco se ha podido aplicar un modelo de Extreme Gradient Boosting debido a las mismas limitaciones.
+
+En cualquier caso, estas limitaciones no invalidan que ambos modelos son los que obtienen un mejor rendimiento en términos de clasificaciones correctas sobre el conjunto de prueba. Finalmente, cabe señalar que otros modelos como las Redes Neuronales o las “Support Vector Machines”, a pesar de obtener potenciales mejores niveles de clasificación correcta, no han sido incluidos en el análisis debido a que no formaban parte del conjunto de técnicas evaluables.
