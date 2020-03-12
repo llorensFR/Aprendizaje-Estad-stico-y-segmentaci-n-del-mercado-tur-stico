@@ -225,7 +225,7 @@ knn.cv10
 
 Como se puede comprobar en la tabla anterior, el mejor modelo se obtiene con K = 1, es decir, clasificando cada observación a partir de la categoría de su vecino más cercano. 
 
-```{r Best KNN: K=1}
+```{r Best KNN: K1}
 set.seed(111)
 ind <- sample(2, nrow(df.numeric), replace=TRUE, prob=c(0.8, 0.2))
 df.train.num <- df.numeric[ind==1, -c(3), drop = TRUE]
