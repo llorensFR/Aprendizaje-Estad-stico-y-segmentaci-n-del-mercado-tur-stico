@@ -247,7 +247,7 @@ Si lo comparamos el clasificador mas “ingenuo” posible (clasificar todas las
 
 En segundo lugar, se ha estimado una regresión logística multinomial. Se ha utilizado el método de la validación cruzada (con 10 “folds”) para optimizar los parámetros de la regresión sobre el conjunto de entrenamiento. Una vez obtenidos estos parámetros se ha realizado una predicción para los valores del conjunto de prueba. 
 
-```{r Multinomial Logit CV10}
+```{r Multinomial Logit CV10, results="hide"}
 set.seed(111)
 glm.fit.cv10 <- multinom(motiv ~., data = df.train, MaxNWts = 100000, K = 10, maxit = 1000)
 glm.preds.cv10 = predict(glm.fit.cv10, type="class", newdata = df.test)
@@ -432,7 +432,7 @@ fitControl <- trainControl(method = 'cv', number = 3, summaryFunction=defaultSum
 
 Se aplica cada una de las combinaciones del grid anterior al modelo GBM con los datos del conjunto de entrenamiento
 
-```{r}
+```{r, results="hide"}
 ### Gradient boosting machine algorithm. ###
 fit.gbm <- train(motiv~., data=df.train, method = 'gbm', trControl=fitControl, tuneGrid=gbmGrid, metric='Accuracy', distribution='multinomial')
 
@@ -505,9 +505,17 @@ En la Tabla inferior se presentan los niveles de precisión de “accuracy” lo
 
 ```{r Resumen}
 baseline = 0.5703
-table(baseline, knn.accuracy.k1, logit.accuracy, lda.accuracy, tree.accuracy, tree.accuracy.cv, rf.accuracy, bgm.accuracy)
-```
 
+DT = data.table( Baseline = round(baseline, 4)*100,
+                 KNN = round(knn.accuracy.k1, 4)*100,
+                 LDA = round(lda.accuracy, 4)*100,
+                 Arbol = round(tree.accuracy, 4)*100,
+                 Arbol.Prune  =  round(tree.accuracy.cv, 4)*100,
+                 Random.Forest =  round(rf.accuracy, 4)*100,
+                 Boosting = round(bgm.accuracy, 4)*100
+)
+DT
+```
 Si nos referimos al modelo de clasificación mas simple como “baseline” o punto de partida (clasificar todas las nuevas observaciones por la clase con mayor peso de la muestra), observamos como todos los modelos aplicados consiguen mejorar el proceso de clasificación de turistas.
 
 El modelo de KNN con 1 vecino resulta ser el consigue un peor rendimiento. A medida que se incrementa la complejidad de los modelos aplicados, mayor es el nivel de precisión que se consigue. Mientras que los modelos de Análisis Discriminante Lineal y Árbol de Decisión (con y sin poda) no alcanzan el 70% de corrección en la clasificación, los de la regresión Logístia así como el de Bosque Aleatorio y Boosting si logran superar esta barrera.
