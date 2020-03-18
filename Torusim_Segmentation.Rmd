@@ -22,6 +22,7 @@ library(foreign)
 library(nnet)
 library(tree)
 library(randomForest)
+library(data.table)
 ```
 
 # 1. Introducción y justificación
